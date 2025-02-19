@@ -57,6 +57,14 @@ func NewFromRelease(release linux.Release) (*Distro, error) {
 		}
 	}
 
+	if t == Debian && release.VersionID == "" && release.Version == "" && strings.Contains(release.PrettyName, "sid") {
+		return &Distro{
+			Type:       t,
+			RawVersion: "unstable",
+			IDLike:     release.IDLike,
+		}, nil
+	}
+
 	return New(t, selectedVersion, release.IDLike...)
 }
 
@@ -72,6 +80,22 @@ func (d Distro) MajorVersion() string {
 	return fmt.Sprintf("%d", d.Version.Segments()[0])
 }
 
+// MinorVersion returns the minor version value from the pseudo-semantically versioned distro version value.
+func (d Distro) MinorVersion() string {
+	if d.Version == nil {
+		parts := strings.Split(d.RawVersion, ".")
+		if len(parts) > 1 {
+			return parts[1]
+		}
+		return ""
+	}
+	parts := d.Version.Segments()
+	if len(parts) > 1 {
+		return fmt.Sprintf("%d", parts[1])
+	}
+	return ""
+}
+
 // FullVersion returns the original user version value.
 func (d Distro) FullVersion() string {
 	return d.RawVersion
@@ -84,4 +108,18 @@ func (d Distro) String() string {
 		versionStr = d.RawVersion
 	}
 	return fmt.Sprintf("%s %s", d.Type, versionStr)
+}
+
+func (d Distro) IsRolling() bool {
+	return d.Type == Wolfi || d.Type == Chainguard || d.Type == ArchLinux || d.Type == Gentoo
+}
+
+// Unsupported Linux distributions
+func (d Distro) Disabled() bool {
+	switch {
+	case d.Type == ArchLinux:
+		return true
+	default:
+		return false
+	}
 }

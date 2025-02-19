@@ -6,9 +6,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/anchore/grype/internal"
+	"github.com/anchore/grype/internal/stringutil"
 	"github.com/anchore/syft/syft/linux"
 	"github.com/anchore/syft/syft/source"
+	"github.com/anchore/syft/syft/source/directorysource"
 )
 
 func Test_NewDistroFromRelease(t *testing.T) {
@@ -65,6 +66,31 @@ func Test_NewDistroFromRelease(t *testing.T) {
 				VersionID: "8",
 			},
 			expectErr: true,
+		},
+		{
+			// syft -o json debian:testing | jq .distro
+			name: "unstable debian",
+			release: linux.Release{
+				ID:              "debian",
+				VersionID:       "",
+				Version:         "",
+				PrettyName:      "Debian GNU/Linux trixie/sid",
+				VersionCodename: "trixie",
+				Name:            "Debian GNU/Linux",
+			},
+			expectedType:       Debian,
+			expectedRawVersion: "unstable",
+			expectedVersion:    "",
+		},
+		{
+			name: "azure linux 3",
+			release: linux.Release{
+				ID:        "azurelinux",
+				Version:   "3.0.20240417",
+				VersionID: "3.0",
+			},
+			expectedType:       Azure,
+			expectedRawVersion: "3.0",
 		},
 	}
 
@@ -191,6 +217,11 @@ func Test_NewDistroFromRelease_Coverage(t *testing.T) {
 			Version: "1.0.0",
 		},
 		{
+			fixture: "test-fixtures/os/azurelinux",
+			Type:    Azure,
+			Version: "3.0.0",
+		},
+		{
 			fixture: "test-fixtures/os/rockylinux",
 			Type:    RockyLinux,
 			Version: "8.4.0",
@@ -200,10 +231,22 @@ func Test_NewDistroFromRelease_Coverage(t *testing.T) {
 			Type:    AlmaLinux,
 			Version: "8.4.0",
 		},
+		{
+			fixture: "test-fixtures/os/gentoo",
+			Type:    Gentoo,
+		},
+		{
+			fixture: "test-fixtures/os/wolfi",
+			Type:    Wolfi,
+		},
+		{
+			fixture: "test-fixtures/os/chainguard",
+			Type:    Chainguard,
+		},
 	}
 
-	observedDistros := internal.NewStringSet()
-	definedDistros := internal.NewStringSet()
+	observedDistros := stringutil.NewStringSet()
+	definedDistros := stringutil.NewStringSet()
 
 	for _, distroType := range All {
 		definedDistros.Add(string(distroType))
@@ -215,7 +258,7 @@ func Test_NewDistroFromRelease_Coverage(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.fixture, func(t *testing.T) {
-			s, err := source.NewFromDirectory(test.fixture)
+			s, err := directorysource.NewFromPath(test.fixture)
 			require.NoError(t, err)
 
 			resolver, err := s.FileResolver(source.SquashedScope)
@@ -235,7 +278,6 @@ func Test_NewDistroFromRelease_Coverage(t *testing.T) {
 			if test.Version != "" {
 				assert.Equal(t, d.Version.String(), test.Version)
 			}
-
 		})
 	}
 

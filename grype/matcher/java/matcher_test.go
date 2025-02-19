@@ -9,18 +9,17 @@ import (
 
 	"github.com/anchore/grype/grype/match"
 	"github.com/anchore/grype/grype/pkg"
-	"github.com/anchore/grype/internal"
+	"github.com/anchore/grype/internal/stringutil"
 	syftPkg "github.com/anchore/syft/syft/pkg"
 )
 
 func TestMatcherJava_matchUpstreamMavenPackage(t *testing.T) {
 	p := pkg.Package{
-		ID:           pkg.ID(uuid.NewString()),
-		Name:         "org.springframework.spring-webmvc",
-		Version:      "5.1.5.RELEASE",
-		Language:     syftPkg.Java,
-		Type:         syftPkg.JavaPkg,
-		MetadataType: pkg.JavaMetadataType,
+		ID:       pkg.ID(uuid.NewString()),
+		Name:     "org.springframework.spring-webmvc",
+		Version:  "5.1.5.RELEASE",
+		Language: syftPkg.Java,
+		Type:     syftPkg.JavaPkg,
 		Metadata: pkg.JavaMetadata{
 			ArchiveDigests: []pkg.Digest{
 				{
@@ -31,15 +30,20 @@ func TestMatcherJava_matchUpstreamMavenPackage(t *testing.T) {
 		},
 	}
 	matcher := Matcher{
-		SearchMavenUpstream: true,
-		MavenSearcher:       newMockSearcher(p),
+		cfg: MatcherConfig{
+			ExternalSearchConfig: ExternalSearchConfig{
+				SearchMavenUpstream: true,
+			},
+			UseCPEs: false,
+		},
+		MavenSearcher: newMockSearcher(p),
 	}
 	store := newMockProvider()
 	actual, _ := matcher.matchUpstreamMavenPackages(store, p)
 
 	assert.Len(t, actual, 2, "unexpected matches count")
 
-	foundCVEs := internal.NewStringSet()
+	foundCVEs := stringutil.NewStringSet()
 	for _, v := range actual {
 		foundCVEs.Add(v.Vulnerability.ID)
 

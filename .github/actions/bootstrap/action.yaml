@@ -1,0 +1,71 @@
+name: "Bootstrap"
+description: "Bootstrap all tools and dependencies"
+inputs:
+  go-version:
+    description: "Go version to install"
+    required: true
+    default: "1.24.x"
+  python-version:
+    description: "Python version to install"
+    required: true
+    default: "3.11"
+  go-dependencies:
+    description: "Download go dependencies"
+    required: true
+    default: "true"
+  cache-key-prefix:
+    description: "Prefix all cache keys with this value"
+    required: true
+    default: "1ac8281053"
+  compute-fingerprints:
+    description: "Compute test fixture fingerprints"
+    required: true
+    default: "true"
+  tools:
+    description: "whether to install tools"
+    default: "true"
+  bootstrap-apt-packages:
+    description: "Space delimited list of tools to install via apt"
+    default: "libxml2-utils"
+
+runs:
+  using: "composite"
+  steps:
+    # note: go mod and build is automatically cached on default with v4+
+    - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
+      if: inputs.go-version != ''
+      with:
+        go-version: ${{ inputs.go-version }}
+
+    - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Restore tool cache
+      id: tool-cache
+      uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+      if: inputs.tools == 'true'
+      with:
+        path: ${{ github.workspace }}/.tool
+        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-tool-${{ hashFiles('.binny.yaml') }}
+
+    - name: Install project tools
+      if: inputs.tools == 'true'
+      shell: bash
+      run: make tools
+
+    - name: Install go dependencies
+      if: inputs.go-dependencies == 'true'
+      shell: bash
+      run: make ci-bootstrap-go
+
+    - name: Install apt packages
+      if: inputs.bootstrap-apt-packages != ''
+      shell: bash
+      run: |
+        DEBIAN_FRONTEND=noninteractive sudo apt update && sudo -E apt install -y ${{ inputs.bootstrap-apt-packages }}
+
+    - name: Create all cache fingerprints
+      if: inputs.compute-fingerprints == 'true'
+      shell: bash
+      run: make fingerprints

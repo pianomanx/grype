@@ -4,22 +4,18 @@ There are a few useful things to know before diving into the codebase. This proj
 
 ## Getting started
 
-### Native Development
-
 After cloning do the following:
 
-1. run `make bootstrap` to download go mod dependencies, create the `/.tmp` dir, and download helper utilities.
+1. run `go build ./cmd/grype` to get a binary named `main` from the source (use `-o <name>` to get a differently named binary), or optionally `go run ./cmd/grype` to run from source.
+
+In order to run tests and build all artifacts:
+
+1. run `make bootstrap` to download go mod dependencies, create the `/.tmp` dir, and download helper utilities (this only needs to be done once or when build tools are updated).
 2. run `make` to run linting, tests, and other verifications to make certain everything is working alright.
 
-Checkout `make help` to see what other actions you can take.
+The main make tasks for common static analysis and testing are `lint`, `format`, `lint-fix`, `unit`, and `integration`.
 
-### Docker Development
-
-This depends on Docker and Docker Compose
-
-1. run `docker-compose build grype` to build the local development container
-2. run `docker-compose run --rm grype bash` to enter into the container with all the bootstrapped dependencies installed.
-3. run `make` to verify everything is installed and working properly
+See `make help` for all the current make tasks.
 
 ## Relationship to Syft
 
@@ -35,7 +31,7 @@ to a released version (e.g. `go get github.com/anchore/syft@v<semantic-version>`
 The currently supported database format is Sqlite3. Install `sqlite3` in your system and ensure that the `sqlite3` executable is available in your path. Ask `grype` about the location of the database, which will be different depending on the operating system:
 
 ```
-$ go run main.go db status
+$ go run ./cmd/grype db status
 Location:  /Users/alfredo/Library/Caches/grype/db
 Built:  2020-07-31 08:18:29 +0000 UTC
 Current DB Version:  1

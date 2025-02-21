@@ -26,8 +26,24 @@ test_positive_snapshot_install_asset() {
   expected_path="${install_dir}/${binary}"
   assertFileExists "${expected_path}" "install_asset os=${os} arch=${arch} format=${format}"
 
+  # directory structure for arch has been updated as of go 1.18
+  # https://goreleaser.com/customization/build/#why-is-there-a-_v1-suffix-on-amd64-buildsjk
+  if [ $arch == "amd64" ]; then
+	  arch="amd64_v1"
+  fi
+
+  local_suffix=""
+  if [ "${arch}" == "arm64" ]; then
+    local_suffix="_v8.0"
+  fi
+
+  if [ "${arch}" == "ppc64le" ]; then
+    local_suffix="_power8"
+  fi
+
+
   assertFilesEqual \
-    "$(snapshot_dir)/${os}-build_${os}_${arch}/${binary}" \
+    "$(snapshot_dir)/${os}-build_${os}_${arch}${local_suffix}/${binary}" \
     "${expected_path}" \
     "unable to verify installation of os=${os} arch=${arch} format=${format}"
 
@@ -76,6 +92,8 @@ trap 'teardown_snapshot_server ${worker_pid}' EXIT
 # exercise all possible archive assets (not rpm/deb/dmg) against a snapshot build
 run_test_case test_positive_snapshot_install_asset "linux" "amd64" "tar.gz"
 run_test_case test_positive_snapshot_install_asset "linux" "arm64" "tar.gz"
+run_test_case test_positive_snapshot_install_asset "linux" "s390x" "tar.gz"
+run_test_case test_positive_snapshot_install_asset "linux" "ppc64le" "tar.gz"
 run_test_case test_positive_snapshot_install_asset "darwin" "amd64" "tar.gz"
 run_test_case test_positive_snapshot_install_asset "darwin" "arm64" "tar.gz"
 run_test_case test_positive_snapshot_install_asset "windows" "amd64" "zip"

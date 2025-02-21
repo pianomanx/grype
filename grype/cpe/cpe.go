@@ -1,14 +1,16 @@
 package cpe
 
 import (
+	"github.com/facebookincubator/nvdtools/wfn"
+
 	"github.com/anchore/grype/internal/log"
-	"github.com/anchore/syft/syft/pkg"
+	"github.com/anchore/syft/syft/cpe"
 )
 
-func NewSlice(cpeStrs ...string) ([]pkg.CPE, error) {
-	var cpes []pkg.CPE
+func NewSlice(cpeStrs ...string) ([]cpe.CPE, error) {
+	var cpes []cpe.CPE
 	for _, c := range cpeStrs {
-		value, err := pkg.NewCPE(c)
+		value, err := cpe.New(c, "")
 		if err != nil {
 			log.Warnf("excluding invalid CPE %q: %v", c, err)
 			continue
@@ -19,11 +21,14 @@ func NewSlice(cpeStrs ...string) ([]pkg.CPE, error) {
 	return cpes, nil
 }
 
-func MatchWithoutVersion(c pkg.CPE, candidates []pkg.CPE) []pkg.CPE {
-	matches := make([]pkg.CPE, 0)
+func MatchWithoutVersion(c cpe.CPE, candidates []cpe.CPE) []cpe.CPE {
+	matches := make([]cpe.CPE, 0)
+	a := wfn.Attributes(c.Attributes)
+	a.Update = wfn.Any
 	for _, candidate := range candidates {
-		canCopy := candidate
-		if c.MatchWithoutVersion(&canCopy) {
+		canCopy := wfn.Attributes(candidate.Attributes)
+		canCopy.Update = wfn.Any
+		if a.MatchWithoutVersion(&canCopy) {
 			matches = append(matches, candidate)
 		}
 	}

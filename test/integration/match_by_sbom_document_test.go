@@ -4,15 +4,15 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/go-test/deep"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/scylladb/go-set/strset"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/anchore/grype/grype"
-	"github.com/anchore/grype/grype/db"
 	"github.com/anchore/grype/grype/match"
-	"github.com/anchore/grype/grype/search"
+	"github.com/anchore/grype/grype/pkg"
 	"github.com/anchore/syft/syft/source"
 )
 
@@ -35,7 +35,7 @@ func TestMatchBySBOMDocument(t *testing.T) {
 							"type":    "windows",
 							"version": "10816",
 						},
-						"namespace": "msrc:10816",
+						"namespace": "msrc:distro:windows:10816",
 						"package": map[string]string{
 							"name":    "10816",
 							"version": "3200970",
@@ -43,6 +43,7 @@ func TestMatchBySBOMDocument(t *testing.T) {
 					},
 					Found: map[string]interface{}{
 						"versionConstraint": "3200970 || 878787 || base (kb)",
+						"vulnerabilityID":   "CVE-2016-3333",
 					},
 					Matcher:    match.MsrcMatcher,
 					Confidence: 1,
@@ -52,33 +53,18 @@ func TestMatchBySBOMDocument(t *testing.T) {
 		{
 			name:        "unknown package type",
 			fixture:     "test-fixtures/sbom/syft-sbom-with-unknown-packages.json",
-			expectedIDs: []string{"CVE-bogus-my-package-1", "CVE-bogus-my-package-2-python"},
+			expectedIDs: []string{"CVE-bogus-my-package-2-idris"},
 			expectedDetails: []match.Detail{
-				{
-					Type: match.CPEMatch,
-					SearchedBy: search.CPEParameters{
-						Namespace: "nvd",
-						CPEs: []string{
-							"cpe:2.3:a:bogus:my-package:1.0.5:*:*:*:*:*:*:*",
-						},
-					},
-					Found: search.CPEResult{
-						VersionConstraint: "< 2.0 (unknown)",
-						CPEs: []string{
-							"cpe:2.3:a:bogus:my-package:*:*:*:*:*:*:something:*",
-						},
-					},
-					Matcher:    match.StockMatcher,
-					Confidence: 0.9,
-				},
 				{
 					Type: match.ExactDirectMatch,
 					SearchedBy: map[string]interface{}{
-						"language":  "python",
-						"namespace": "github:python",
+						"language":  "idris",
+						"namespace": "github:language:idris",
+						"package":   map[string]string{"name": "my-package", "version": "1.0.5"},
 					},
 					Found: map[string]interface{}{
-						"versionConstraint": "< 2.0 (python)",
+						"versionConstraint": "< 2.0 (unknown)",
+						"vulnerabilityID":   "CVE-bogus-my-package-2-idris",
 					},
 					Matcher:    match.StockMatcher,
 					Confidence: 1,
@@ -89,8 +75,8 @@ func TestMatchBySBOMDocument(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			provider := db.NewVulnerabilityProvider(newMockDbStore())
-			matches, _, _, err := grype.FindVulnerabilities(provider, fmt.Sprintf("sbom:%s", test.fixture), source.SquashedScope, nil)
+			vp := newMockDbProvider()
+			matches, _, _, err := grype.FindVulnerabilities(vp, fmt.Sprintf("sbom:%s", test.fixture), source.SquashedScope, nil)
 			assert.NoError(t, err)
 			details := make([]match.Detail, 0)
 			ids := strset.New()
@@ -100,9 +86,14 @@ func TestMatchBySBOMDocument(t *testing.T) {
 			}
 
 			require.Len(t, details, len(test.expectedDetails))
+
+			cmpOpts := []cmp.Option{
+				cmpopts.IgnoreFields(pkg.Package{}, "Locations"),
+			}
+
 			for i := range test.expectedDetails {
-				for _, d := range deep.Equal(test.expectedDetails[i], details[i]) {
-					t.Error(d)
+				if d := cmp.Diff(test.expectedDetails[i], details[i], cmpOpts...); d != "" {
+					t.Errorf("unexpected match details (-want +got):\n%s", d)
 				}
 			}
 

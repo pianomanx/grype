@@ -4,213 +4,220 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"regexp"
+	"os/exec"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/anchore/clio"
 	"github.com/anchore/go-testutils"
-	"github.com/anchore/grype/grype/match"
 	"github.com/anchore/grype/grype/pkg"
+	"github.com/anchore/grype/grype/presenter/internal"
 	"github.com/anchore/grype/grype/presenter/models"
 	"github.com/anchore/grype/grype/vulnerability"
-	"github.com/anchore/stereoscope/pkg/imagetest"
-	syftPkg "github.com/anchore/syft/syft/pkg"
+	"github.com/anchore/syft/syft/file"
 	"github.com/anchore/syft/syft/source"
+	"github.com/anchore/syft/syft/source/directorysource"
 )
 
-var update = flag.Bool("update", false, "update the *.golden files for sarif presenters")
+var updateSnapshot = flag.Bool("update-sarif", false, "update .golden files for sarif presenters")
+var validatorImage = "ghcr.io/anchore/sarif-validator:0.1.0@sha256:a0729d695e023740f5df6bcb50d134e88149bea59c63a896a204e88f62b564c6"
 
-func createResults() (match.Matches, []pkg.Package) {
+func TestSarifPresenter(t *testing.T) {
+	tests := []struct {
+		name   string
+		scheme internal.SyftSource
+	}{
+		{
+			name:   "directory",
+			scheme: internal.DirectorySource,
+		},
+		{
+			name:   "image",
+			scheme: internal.ImageSource,
+		},
+	}
 
-	pkg1 := pkg.Package{
-		ID:      "package-1-id",
-		Name:    "package-1",
-		Version: "1.0.1",
-		Type:    syftPkg.DebPkg,
-		Locations: source.NewLocationSet(
-			source.Location{
-				Coordinates: source.Coordinates{
-					RealPath:     "etc/pkg-1",
-					FileSystemID: "sha256:asdf",
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var buffer bytes.Buffer
+			_, matches, packages, context, metadataProvider, _, _ := internal.GenerateAnalysis(t, tc.scheme)
+
+			pb := models.PresenterConfig{
+				ID: clio.Identification{
+					Name: "grype",
 				},
-			},
-		),
+				Matches:          matches,
+				Packages:         packages,
+				Context:          context,
+				MetadataProvider: metadataProvider,
+			}
+
+			pres := NewPresenter(pb)
+			err := pres.Present(&buffer)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			actual := buffer.Bytes()
+			if *updateSnapshot {
+				testutils.UpdateGoldenFileContents(t, actual)
+			}
+
+			var expected = testutils.GetGoldenFileContents(t)
+			actual = internal.Redact(actual)
+			expected = internal.Redact(expected)
+
+			if !bytes.Equal(expected, actual) {
+				assert.JSONEq(t, string(expected), string(actual))
+			}
+		})
 	}
-	pkg2 := pkg.Package{
-		ID:      "package-2-id",
-		Name:    "package-2",
-		Version: "2.0.1",
-		Type:    syftPkg.DebPkg,
-		Licenses: []string{
-			"MIT",
-			"Apache-v2",
-		},
-		Locations: source.NewLocationSet(
-			source.Location{
-				Coordinates: source.Coordinates{
-					RealPath:     "pkg-2",
-					FileSystemID: "sha256:asdf",
-				},
-			},
-		),
-	}
-
-	var match1 = match.Match{
-
-		Vulnerability: vulnerability.Vulnerability{
-			ID:        "CVE-1999-0001",
-			Namespace: "source-1",
-		},
-		Package: pkg1,
-		Details: []match.Detail{
-			{
-				Type:    match.ExactDirectMatch,
-				Matcher: match.DpkgMatcher,
-			},
-		},
-	}
-
-	var match2 = match.Match{
-
-		Vulnerability: vulnerability.Vulnerability{
-			ID:        "CVE-1999-0002",
-			Namespace: "source-2",
-		},
-		Package: pkg2,
-		Details: []match.Detail{
-			{
-				Type:    match.ExactIndirectMatch,
-				Matcher: match.DpkgMatcher,
-				SearchedBy: map[string]interface{}{
-					"some": "key",
-				},
-			},
-		},
-	}
-
-	matches := match.NewMatches()
-
-	matches.Add(match1, match2)
-
-	return matches, []pkg.Package{pkg1, pkg2}
 }
 
-func createImagePresenter(t *testing.T) *Presenter {
-	matches, packages := createResults()
-
-	img := imagetest.GetFixtureImage(t, "docker-archive", "image-simple")
-	s, err := source.NewFromImage(img, "user-input")
-	if err != nil {
-		t.Fatal(err)
+func Test_SarifIsValid(t *testing.T) {
+	tests := []struct {
+		name   string
+		scheme internal.SyftSource
+	}{
+		{
+			name:   "directory",
+			scheme: internal.DirectorySource,
+		},
+		{
+			name:   "image",
+			scheme: internal.ImageSource,
+		},
 	}
 
-	// This accounts for the non-deterministic digest value that we end up with when
-	// we build a container image dynamically during testing. Ultimately, we should
-	// use a golden image as a test fixture in place of building this image during
-	// testing. At that time, this line will no longer be necessary.
-	//
-	// This value is sourced from the "version" node in "./test-fixtures/snapshot/TestSarifImgsPresenter.golden"
-	s.Metadata.ImageMetadata.ManifestDigest = "sha256:2731251dc34951c0e50fcc643b4c5f74922dad1a5d98f302b504cf46cd5d9368"
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var buffer bytes.Buffer
+			_, matches, packages, context, metadataProvider, _, _ := internal.GenerateAnalysis(t, tc.scheme)
 
-	pres := NewPresenter(matches, packages, &s.Metadata, models.NewMetadataMock())
+			pb := models.PresenterConfig{
+				ID: clio.Identification{
+					Name: "grype",
+				},
+				Matches:          matches,
+				Packages:         packages,
+				Context:          context,
+				MetadataProvider: metadataProvider,
+			}
 
-	return pres
-}
+			pres := NewPresenter(pb)
+			err := pres.Present(&buffer)
+			require.NoError(t, err)
 
-func createDirPresenter(t *testing.T, path string) *Presenter {
-	matches, packages := createResults()
+			cmd := exec.Command("docker", "run", "--rm", "-i", validatorImage)
 
-	s, err := source.NewFromDirectory(path)
-	if err != nil {
-		t.Fatal(err)
+			out := bytes.Buffer{}
+			cmd.Stdout = &out
+			cmd.Stderr = &out
+
+			// pipe to the docker command
+			cmd.Stdin = &buffer
+
+			err = cmd.Run()
+			if err != nil || cmd.ProcessState.ExitCode() != 0 {
+				// valid
+				t.Fatalf("error validating SARIF document: %s", out.String())
+			}
+		})
 	}
-
-	pres := NewPresenter(matches, packages, &s.Metadata, models.NewMetadataMock())
-
-	return pres
 }
 
 func Test_locationPath(t *testing.T) {
 	tests := []struct {
 		name     string
-		path     string
-		scheme   source.Scheme
+		metadata any
 		real     string
 		virtual  string
 		expected string
 	}{
 		{
-			name:     "dir:.",
-			scheme:   source.DirectoryScheme,
-			path:     ".",
+			name: "dir:.",
+			metadata: source.DirectoryMetadata{
+				Path: ".",
+			},
 			real:     "/home/usr/file",
 			virtual:  "file",
 			expected: "file",
 		},
 		{
-			name:     "dir:./",
-			scheme:   source.DirectoryScheme,
-			path:     "./",
+			name: "dir:./",
+			metadata: source.DirectoryMetadata{
+				Path: "./",
+			},
 			real:     "/home/usr/file",
 			virtual:  "file",
 			expected: "file",
 		},
 		{
-			name:     "dir:./someplace",
-			scheme:   source.DirectoryScheme,
-			path:     "./someplace",
+			name: "dir:./someplace",
+			metadata: source.DirectoryMetadata{
+				Path: "./someplace",
+			},
 			real:     "/home/usr/file",
 			virtual:  "file",
 			expected: "someplace/file",
 		},
 		{
-			name:     "dir:/someplace",
-			scheme:   source.DirectoryScheme,
-			path:     "/someplace",
+			name: "dir:/someplace",
+			metadata: source.DirectoryMetadata{
+				Path: "/someplace",
+			},
 			real:     "file",
 			expected: "/someplace/file",
 		},
 		{
-			name:     "dir:/someplace symlink",
-			scheme:   source.DirectoryScheme,
-			path:     "/someplace",
+			name: "dir:/someplace symlink",
+			metadata: source.DirectoryMetadata{
+				Path: "/someplace",
+			},
 			real:     "/someplace/usr/file",
 			virtual:  "file",
 			expected: "/someplace/file",
 		},
 		{
-			name:     "dir:/someplace absolute",
-			scheme:   source.DirectoryScheme,
-			path:     "/someplace",
+			name: "dir:/someplace absolute",
+			metadata: source.DirectoryMetadata{
+				Path: "/someplace",
+			},
 			real:     "/usr/file",
 			expected: "/usr/file",
 		},
 		{
-			name:     "file:/someplace/file",
-			scheme:   source.FileScheme,
-			path:     "/someplace/file",
+			name: "file:/someplace/file",
+			metadata: source.FileMetadata{
+				Path: "/someplace/file",
+			},
 			real:     "/usr/file",
 			expected: "/usr/file",
 		},
 		{
-			name:     "file:/someplace/file relative",
-			scheme:   source.FileScheme,
-			path:     "/someplace/file",
+			name: "file:/someplace/file relative",
+			metadata: source.FileMetadata{
+				Path: "/someplace/file",
+			},
 			real:     "file",
 			expected: "file",
 		},
 		{
-			name:     "image",
-			scheme:   source.ImageScheme,
-			path:     "alpine:latest",
+			name: "image",
+			metadata: source.ImageMetadata{
+				UserInput: "alpine:latest",
+			},
 			real:     "/etc/file",
 			expected: "/etc/file",
 		},
 		{
-			name:     "image symlink",
-			scheme:   source.ImageScheme,
-			path:     "alpine:latest",
+			name: "image symlink",
+			metadata: source.ImageMetadata{
+				UserInput: "alpine:latest",
+			},
 			real:     "/etc/elsewhere/file",
 			virtual:  "/etc/file",
 			expected: "/etc/file",
@@ -219,20 +226,14 @@ func Test_locationPath(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			pres := createDirPresenter(t, test.path)
-			pres.srcMetadata = &source.Metadata{
-				Scheme: test.scheme,
-				Path:   test.path,
+			pres := createDirPresenter(t)
+			pres.src = &source.Description{
+				Metadata: test.metadata,
 			}
 
 			path := pres.packagePath(pkg.Package{
-				Locations: source.NewLocationSet(
-					source.Location{
-						Coordinates: source.Coordinates{
-							RealPath: test.real,
-						},
-						VirtualPath: test.virtual,
-					},
+				Locations: file.NewLocationSet(
+					file.NewVirtualLocation(test.real, test.virtual),
 				),
 			})
 
@@ -241,129 +242,120 @@ func Test_locationPath(t *testing.T) {
 	}
 }
 
-func Test_imageToSarifReport(t *testing.T) {
-	pres := createImagePresenter(t)
-	s, err := pres.toSarifReport()
-	assert.NoError(t, err)
-
-	assert.Len(t, s.Runs, 1)
-
-	run := s.Runs[0]
-
-	// Sorted by vulnID, pkg name, ...
-	assert.Len(t, run.Tool.Driver.Rules, 2)
-	assert.Equal(t, "CVE-1999-0001-package-1", run.Tool.Driver.Rules[0].ID)
-	assert.Equal(t, "CVE-1999-0002-package-2", run.Tool.Driver.Rules[1].ID)
-
-	assert.Len(t, run.Results, 2)
-	result := run.Results[0]
-	assert.Equal(t, "CVE-1999-0001-package-1", *result.RuleID)
-	assert.Len(t, result.Locations, 1)
-	location := result.Locations[0]
-	assert.Equal(t, "image/etc/pkg-1", *location.PhysicalLocation.ArtifactLocation.URI)
-
-	result = run.Results[1]
-	assert.Equal(t, "CVE-1999-0002-package-2", *result.RuleID)
-	assert.Len(t, result.Locations, 1)
-	location = result.Locations[0]
-	assert.Equal(t, "image/pkg-2", *location.PhysicalLocation.ArtifactLocation.URI)
-}
-
-func Test_dirToSarifReport(t *testing.T) {
-	pres := createDirPresenter(t, "/abs/path")
-	s, err := pres.toSarifReport()
-	assert.NoError(t, err)
-
-	assert.Len(t, s.Runs, 1)
-
-	run := s.Runs[0]
-
-	// Sorted by vulnID, pkg name, ...
-	assert.Len(t, run.Tool.Driver.Rules, 2)
-	assert.Equal(t, "CVE-1999-0001-package-1", run.Tool.Driver.Rules[0].ID)
-	assert.Equal(t, "CVE-1999-0002-package-2", run.Tool.Driver.Rules[1].ID)
-
-	assert.Len(t, run.Results, 2)
-	result := run.Results[0]
-	assert.Equal(t, "CVE-1999-0001-package-1", *result.RuleID)
-	assert.Len(t, result.Locations, 1)
-	location := result.Locations[0]
-	assert.Equal(t, "/abs/path/etc/pkg-1", *location.PhysicalLocation.ArtifactLocation.URI)
-
-	result = run.Results[1]
-	assert.Equal(t, "CVE-1999-0002-package-2", *result.RuleID)
-	assert.Len(t, result.Locations, 1)
-	location = result.Locations[0]
-	assert.Equal(t, "/abs/path/pkg-2", *location.PhysicalLocation.ArtifactLocation.URI)
-}
-
-func TestSarifPresenterImage(t *testing.T) {
-	var buffer bytes.Buffer
-
-	pres := createImagePresenter(t)
-
-	// run presenter
-	err := pres.Present(&buffer)
+func createDirPresenter(t *testing.T) *Presenter {
+	_, matches, packages, _, metadataProvider, _, _ := internal.GenerateAnalysis(t, internal.DirectorySource)
+	d := t.TempDir()
+	s, err := directorysource.NewFromPath(d)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	actual := buffer.Bytes()
-	if *update {
-		testutils.UpdateGoldenFileContents(t, actual)
+	desc := s.Describe()
+	pb := models.PresenterConfig{
+		Matches:          matches,
+		Packages:         packages,
+		MetadataProvider: metadataProvider,
+		Context: pkg.Context{
+			Source: &desc,
+		},
 	}
 
-	var expected = testutils.GetGoldenFileContents(t)
+	pres := NewPresenter(pb)
 
-	// remove dynamic values, which are tested independently
-	actual = redact(actual)
-	expected = redact(expected)
-
-	assert.JSONEq(t, string(expected), string(actual))
+	return pres
 }
 
-func TestSarifPresenterDir(t *testing.T) {
-	var buffer bytes.Buffer
-	pres := createDirPresenter(t, ".")
-
-	// run presenter
-	err := pres.Present(&buffer)
-	if err != nil {
-		t.Fatal(err)
+func TestToSarifReport(t *testing.T) {
+	tt := []struct {
+		name      string
+		scheme    internal.SyftSource
+		locations map[string]string
+	}{
+		{
+			name:   "directory",
+			scheme: internal.DirectorySource,
+			locations: map[string]string{
+				"CVE-1999-0001-package-1": "/some/path/somefile-1.txt",
+				"CVE-1999-0002-package-2": "/some/path/somefile-2.txt",
+			},
+		},
+		{
+			name:   "image",
+			scheme: internal.ImageSource,
+			locations: map[string]string{
+				"CVE-1999-0001-package-1": "user-input/somefile-1.txt",
+				"CVE-1999-0002-package-2": "user-input/somefile-2.txt",
+			},
+		},
 	}
 
-	actual := buffer.Bytes()
-	if *update {
-		testutils.UpdateGoldenFileContents(t, actual)
+	for _, tc := range tt {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, matches, packages, context, metadataProvider, _, _ := internal.GenerateAnalysis(t, tc.scheme)
+
+			pb := models.PresenterConfig{
+				Matches:          matches,
+				Packages:         packages,
+				MetadataProvider: metadataProvider,
+				Context:          context,
+			}
+
+			pres := NewPresenter(pb)
+
+			report, err := pres.toSarifReport()
+			assert.NoError(t, err)
+
+			assert.Len(t, report.Runs, 1)
+			assert.NotEmpty(t, report.Runs)
+			assert.NotEmpty(t, report.Runs[0].Results)
+			assert.NotEmpty(t, report.Runs[0].Tool.Driver)
+			assert.NotEmpty(t, report.Runs[0].Tool.Driver.Rules)
+
+			// Sorted by vulnID, pkg name, ...
+			run := report.Runs[0]
+			assert.Len(t, run.Tool.Driver.Rules, 2)
+			assert.Equal(t, "CVE-1999-0001-package-1", run.Tool.Driver.Rules[0].ID)
+			assert.Equal(t, "CVE-1999-0002-package-2", run.Tool.Driver.Rules[1].ID)
+
+			assert.Len(t, run.Results, 2)
+			result := run.Results[0]
+			assert.Equal(t, "CVE-1999-0001-package-1", *result.RuleID)
+			assert.Len(t, result.Locations, 1)
+			location := result.Locations[0]
+			expectedLocation, ok := tc.locations[*result.RuleID]
+			if !ok {
+				t.Fatalf("no expected location for %s", *result.RuleID)
+			}
+			assert.Equal(t, expectedLocation, *location.PhysicalLocation.ArtifactLocation.URI)
+
+			result = run.Results[1]
+			assert.Equal(t, "CVE-1999-0002-package-2", *result.RuleID)
+			assert.Len(t, result.Locations, 1)
+			location = result.Locations[0]
+			expectedLocation, ok = tc.locations[*result.RuleID]
+			if !ok {
+				t.Fatalf("no expected location for %s", *result.RuleID)
+			}
+			assert.Equal(t, expectedLocation, *location.PhysicalLocation.ArtifactLocation.URI)
+		})
 	}
 
-	var expected = testutils.GetGoldenFileContents(t)
-
-	// remove dynamic values, which are tested independently
-	actual = redact(actual)
-	expected = redact(expected)
-
-	assert.JSONEq(t, string(expected), string(actual))
-}
-
-func redact(s []byte) []byte {
-	for _, pattern := range []*regexp.Regexp{} {
-		s = pattern.ReplaceAll(s, []byte("redacted"))
-	}
-	return s
 }
 
 type NilMetadataProvider struct{}
 
-func (m *NilMetadataProvider) GetMetadata(_, _ string) (*vulnerability.Metadata, error) {
+func (m *NilMetadataProvider) VulnerabilityMetadata(_ vulnerability.Reference) (*vulnerability.Metadata, error) {
 	return nil, nil
 }
 
 type MockMetadataProvider struct{}
 
-func (m *MockMetadataProvider) GetMetadata(id, namespace string) (*vulnerability.Metadata, error) {
+func (m *MockMetadataProvider) VulnerabilityMetadata(ref vulnerability.Reference) (*vulnerability.Metadata, error) {
 	cvss := func(id string, namespace string, scores ...float64) vulnerability.Metadata {
-		values := make([]vulnerability.Cvss, len(scores))
+		values := make([]vulnerability.Cvss, 0, len(scores))
 		for _, score := range scores {
 			values = append(values, vulnerability.Cvss{
 				Metrics: vulnerability.CvssMetrics{
@@ -378,12 +370,12 @@ func (m *MockMetadataProvider) GetMetadata(id, namespace string) (*vulnerability
 		}
 	}
 	values := []vulnerability.Metadata{
-		cvss("1", "nvd", 1),
+		cvss("1", "nvd:cpe", 1),
 		cvss("1", "not-nvd", 2),
 		cvss("2", "not-nvd", 3, 4),
 	}
 	for _, v := range values {
-		if v.ID == id && v.Namespace == namespace {
+		if v.ID == ref.ID && v.Namespace == ref.Namespace {
 			return &v, nil
 		}
 	}
@@ -395,8 +387,10 @@ func Test_cvssScoreWithNilMetadata(t *testing.T) {
 		metadataProvider: &NilMetadataProvider{},
 	}
 	score := pres.cvssScore(vulnerability.Vulnerability{
-		ID:        "id",
-		Namespace: "namespace",
+		Reference: vulnerability.Reference{
+			ID:        "id",
+			Namespace: "namespace",
+		},
 	})
 	assert.Equal(t, float64(-1), score)
 }
@@ -410,11 +404,13 @@ func Test_cvssScore(t *testing.T) {
 		{
 			name: "none",
 			vulnerability: vulnerability.Vulnerability{
-				ID: "4",
+				Reference: vulnerability.Reference{
+					ID: "4",
+				},
 				RelatedVulnerabilities: []vulnerability.Reference{
 					{
 						ID:        "7",
-						Namespace: "nvd",
+						Namespace: "nvd:cpe",
 					},
 				},
 			},
@@ -423,12 +419,14 @@ func Test_cvssScore(t *testing.T) {
 		{
 			name: "direct",
 			vulnerability: vulnerability.Vulnerability{
-				ID:        "2",
-				Namespace: "not-nvd",
+				Reference: vulnerability.Reference{
+					ID:        "2",
+					Namespace: "not-nvd",
+				},
 				RelatedVulnerabilities: []vulnerability.Reference{
 					{
 						ID:        "1",
-						Namespace: "nvd",
+						Namespace: "nvd:cpe",
 					},
 				},
 			},
@@ -437,12 +435,14 @@ func Test_cvssScore(t *testing.T) {
 		{
 			name: "related not nvd",
 			vulnerability: vulnerability.Vulnerability{
-				ID:        "1",
-				Namespace: "nvd",
+				Reference: vulnerability.Reference{
+					ID:        "1",
+					Namespace: "nvd:cpe",
+				},
 				RelatedVulnerabilities: []vulnerability.Reference{
 					{
 						ID:        "1",
-						Namespace: "nvd",
+						Namespace: "nvd:cpe",
 					},
 					{
 						ID:        "1",
@@ -455,12 +455,14 @@ func Test_cvssScore(t *testing.T) {
 		{
 			name: "related nvd",
 			vulnerability: vulnerability.Vulnerability{
-				ID:        "4",
-				Namespace: "not-nvd",
+				Reference: vulnerability.Reference{
+					ID:        "4",
+					Namespace: "not-nvd",
+				},
 				RelatedVulnerabilities: []vulnerability.Reference{
 					{
 						ID:        "1",
-						Namespace: "nvd",
+						Namespace: "nvd:cpe",
 					},
 					{
 						ID:        "7",
@@ -479,6 +481,41 @@ func Test_cvssScore(t *testing.T) {
 			}
 			score := pres.cvssScore(test.vulnerability)
 			assert.Equal(t, test.expected, score)
+		})
+	}
+}
+
+func Test_imageShortPathName(t *testing.T) {
+	tests := []struct {
+		name     string
+		in       string
+		expected string
+	}{
+		{
+			name:     "valid single name",
+			in:       "simple.-_name",
+			expected: "simple.-_name",
+		},
+		{
+			name:     "valid name in org",
+			in:       "some-org/some-image",
+			expected: "some-image",
+		},
+		{
+			name:     "name and org with many invalid chars",
+			in:       "some/*^&$#%$#@*(}{<><./,valid-()(#)@!(~@#$#%^&**[]{-chars",
+			expected: "valid--chars",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := imageShortPathName(&source.Description{
+				Name:     test.in,
+				Metadata: nil,
+			})
+
+			assert.Equal(t, test.expected, got)
 		})
 	}
 }

@@ -1,0 +1,9 @@
+venv
+.yardstick/tools
+.yardstick/result
+stage
+pull
+migrate.py
+.oras-cache
+*.tar.gz
+*.tar.zst

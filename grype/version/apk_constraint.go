@@ -10,7 +10,7 @@ type apkConstraint struct {
 
 func newApkConstraint(raw string) (apkConstraint, error) {
 	if raw == "" {
-		// empy constraints are always satisfied
+		// empty constraints are always satisfied
 		return apkConstraint{}, nil
 	}
 
@@ -54,7 +54,7 @@ func (c apkConstraint) Satisfied(version *Version) (bool, error) {
 	}
 
 	if !c.supported(version.Format) {
-		return false, fmt.Errorf("(apk) unsupported format: %s", version.Format)
+		return false, NewUnsupportedFormatError(ApkFormat, version.Format)
 	}
 
 	if version.rich.apkVer == nil {

@@ -9,7 +9,7 @@ type fuzzyVersion struct {
 	raw    string
 }
 
-// nolint:unparam
+//nolint:unparam
 func newFuzzyVersion(raw string) (fuzzyVersion, error) {
 	var semVer *semanticVersion
 
@@ -25,6 +25,9 @@ func newFuzzyVersion(raw string) (fuzzyVersion, error) {
 }
 
 func (v *fuzzyVersion) Compare(other *Version) (int, error) {
+	if other == nil {
+		return -1, ErrNoVersionProvided
+	}
 	// check if both versions can be compared as semvers...
 	if other.Format == SemanticFormat && v.semVer != nil {
 		if other.rich.semVer == nil {

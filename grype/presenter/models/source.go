@@ -3,6 +3,7 @@ package models
 import (
 	"fmt"
 
+	"github.com/anchore/grype/grype/pkg"
 	syftSource "github.com/anchore/syft/syft/source"
 )
 
@@ -12,39 +13,53 @@ type source struct {
 }
 
 // newSource creates a new source object to be represented into JSON.
-func newSource(src syftSource.Metadata) (source, error) {
-	switch src.Scheme {
-	case syftSource.ImageScheme:
-		metadata := src.ImageMetadata
+func newSource(src syftSource.Description) (source, error) {
+	switch m := src.Metadata.(type) {
+	case pkg.PURLFileMetadata:
+		return source{
+			Type:   "purl-file",
+			Target: m.Path,
+		}, nil
+	case pkg.PURLLiteralMetadata:
+		return source{
+			Type:   "purl",
+			Target: m.PURL,
+		}, nil
+	case pkg.CPELiteralMetadata:
+		return source{
+			Type:   "cpe",
+			Target: m.CPE,
+		}, nil
+	case syftSource.ImageMetadata:
 		// ensure that empty collections are not shown as null
-		if metadata.RepoDigests == nil {
-			metadata.RepoDigests = []string{}
+		if m.RepoDigests == nil {
+			m.RepoDigests = []string{}
 		}
-		if metadata.Tags == nil {
-			metadata.Tags = []string{}
+		if m.Tags == nil {
+			m.Tags = []string{}
 		}
 
 		return source{
 			Type:   "image",
-			Target: metadata,
+			Target: m,
 		}, nil
-	case syftSource.DirectoryScheme:
+	case syftSource.DirectoryMetadata:
 		return source{
 			Type:   "directory",
-			Target: src.Path,
+			Target: m.Path,
 		}, nil
-	case syftSource.FileScheme:
+	case syftSource.FileMetadata:
 		return source{
 			Type:   "file",
-			Target: src.Path,
+			Target: m.Path,
 		}, nil
-	case "":
+	case nil:
 		// we may be showing results from a input source that does not support source information
 		return source{
 			Type:   "unknown",
 			Target: "unknown",
 		}, nil
 	default:
-		return source{}, fmt.Errorf("unsupported source: %q", src.Scheme)
+		return source{}, fmt.Errorf("unsupported source: %T", src.Metadata)
 	}
 }

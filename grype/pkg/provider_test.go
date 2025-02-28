@@ -6,8 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/anchore/stereoscope/pkg/imagetest"
-	"github.com/anchore/syft/syft/pkg/cataloger"
-	"github.com/anchore/syft/syft/source"
+	"github.com/anchore/syft/syft"
+	"github.com/anchore/syft/syft/file"
 )
 
 func TestProviderLocationExcludes(t *testing.T) {
@@ -16,6 +16,7 @@ func TestProviderLocationExcludes(t *testing.T) {
 		fixture  string
 		excludes []string
 		expected []string
+		wantErr  assert.ErrorAssertionFunc
 	}{
 		{
 			name:     "exclude everything",
@@ -41,15 +42,30 @@ func TestProviderLocationExcludes(t *testing.T) {
 			excludes: []string{},
 			expected: []string{"charsets", "tomcat-embed-el"},
 		},
+		{
+			name:     "exclusions must not hide parsing error",
+			fixture:  "test-fixtures/bad-sbom.json",
+			excludes: []string{"**/some-glob/*"},
+			wantErr:  assert.Error,
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := ProviderConfig{
-				Exclusions:        test.excludes,
-				CatalogingOptions: cataloger.DefaultConfig(),
+				SyftProviderConfig: SyftProviderConfig{
+					Exclusions:  test.excludes,
+					SBOMOptions: syft.DefaultCreateSBOMConfig(),
+				},
 			}
-			pkgs, _, _ := Provide(test.fixture, cfg)
+			if test.wantErr == nil {
+				test.wantErr = assert.NoError
+			}
+			pkgs, _, _, err := Provide(test.fixture, cfg)
+			test.wantErr(t, err)
+			if err != nil {
+				return
+			}
 
 			var pkgNames []string
 
@@ -99,10 +115,12 @@ func TestSyftLocationExcludes(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			userInput := imagetest.GetFixtureImageTarPath(t, test.fixture)
 			cfg := ProviderConfig{
-				Exclusions:        test.excludes,
-				CatalogingOptions: cataloger.DefaultConfig(),
+				SyftProviderConfig: SyftProviderConfig{
+					Exclusions:  test.excludes,
+					SBOMOptions: syft.DefaultCreateSBOMConfig(),
+				},
 			}
-			pkgs, _, err := Provide(userInput, cfg)
+			pkgs, _, _, err := Provide(userInput, cfg)
 
 			assert.NoErrorf(t, err, "error calling Provide function")
 
@@ -154,14 +172,11 @@ func Test_filterPackageExclusions(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			var packages []Package
 			for _, pkg := range test.locations {
-				locations := source.NewLocationSet()
+				locations := file.NewLocationSet()
 				for _, l := range pkg {
-					locations.Add(source.Location{
-						Coordinates: source.Coordinates{
-							RealPath: l,
-						},
-						VirtualPath: l,
-					})
+					locations.Add(
+						file.NewVirtualLocation(l, l),
+					)
 				}
 				packages = append(packages, Package{Locations: locations})
 			}
@@ -220,13 +235,7 @@ func Test_matchesLocation(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			matches, err := locationMatches(source.Location{
-				Coordinates: source.Coordinates{
-					RealPath: test.realPath,
-				},
-				VirtualPath: test.virtualPath,
-			}, test.match)
-
+			matches, err := locationMatches(file.NewVirtualLocation(test.realPath, test.virtualPath), test.match)
 			assert.NoError(t, err)
 			assert.Equal(t, test.expected, matches)
 		})

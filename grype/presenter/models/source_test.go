@@ -6,20 +6,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/anchore/grype/grype/pkg"
 	syftSource "github.com/anchore/syft/syft/source"
 )
 
 func TestNewSource(t *testing.T) {
 	testCases := []struct {
 		name     string
-		metadata syftSource.Metadata
+		metadata syftSource.Description
 		expected source
 	}{
 		{
 			name: "image",
-			metadata: syftSource.Metadata{
-				Scheme: syftSource.ImageScheme,
-				ImageMetadata: syftSource.ImageMetadata{
+			metadata: syftSource.Description{
+				Metadata: syftSource.ImageMetadata{
 					UserInput:      "abc",
 					ID:             "def",
 					ManifestDigest: "abcdef",
@@ -40,9 +40,10 @@ func TestNewSource(t *testing.T) {
 		},
 		{
 			name: "directory",
-			metadata: syftSource.Metadata{
-				Scheme: syftSource.DirectoryScheme,
-				Path:   "/foo/bar",
+			metadata: syftSource.Description{
+				Metadata: syftSource.DirectoryMetadata{
+					Path: "/foo/bar",
+				},
 			},
 			expected: source{
 				Type:   "directory",
@@ -51,18 +52,63 @@ func TestNewSource(t *testing.T) {
 		},
 		{
 			name: "file",
-			metadata: syftSource.Metadata{
-				Scheme: syftSource.FileScheme,
-				Path:   "/foo/bar/test.zip",
+			metadata: syftSource.Description{
+				Metadata: syftSource.FileMetadata{
+					Path: "/foo/bar/test.zip",
+				},
 			},
 			expected: source{
 				Type:   "file",
 				Target: "/foo/bar/test.zip",
 			},
 		},
+		{
+			name: "purl-file",
+			metadata: syftSource.Description{
+				Metadata: pkg.PURLFileMetadata{
+					Path: "/path/to/purls.txt",
+				},
+			},
+			expected: source{
+				Type:   "purl-file",
+				Target: "/path/to/purls.txt",
+			},
+		},
+		{
+			name: "purl-literal",
+			metadata: syftSource.Description{
+				Metadata: pkg.PURLLiteralMetadata{
+					PURL: "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1",
+				},
+			},
+			expected: source{
+				Type:   "purl",
+				Target: "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1",
+			},
+		},
+		{
+			name: "cpe-literal",
+			metadata: syftSource.Description{
+				Metadata: pkg.CPELiteralMetadata{
+					CPE: "cpe:/a:apache:log4j:2.14.1",
+				},
+			},
+			expected: source{
+				Type:   "cpe",
+				Target: "cpe:/a:apache:log4j:2.14.1",
+			},
+		},
+		{
+			name: "nil metadata",
+			metadata: syftSource.Description{
+				Metadata: nil,
+			},
+			expected: source{
+				Type:   "unknown",
+				Target: "unknown",
+			},
+		},
 	}
-
-	var testedSchemes []syftSource.Scheme
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -70,10 +116,6 @@ func TestNewSource(t *testing.T) {
 			require.NoError(t, err)
 
 			assert.Equal(t, testCase.expected, actual)
-			testedSchemes = append(testedSchemes, testCase.metadata.Scheme)
 		})
 	}
-
-	// Ensure we have test coverage for all possible syftSource.Scheme values.
-	assert.ElementsMatchf(t, syftSource.AllSchemes, testedSchemes, "not all scheme values are being tested")
 }

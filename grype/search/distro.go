@@ -1,66 +1,78 @@
 package search
 
 import (
-	"fmt"
+	"strings"
 
+	"github.com/anchore/grype/grype/db/v5/namespace"
+	distroNs "github.com/anchore/grype/grype/db/v5/namespace/distro"
 	"github.com/anchore/grype/grype/distro"
-	"github.com/anchore/grype/grype/match"
-	"github.com/anchore/grype/grype/pkg"
-	"github.com/anchore/grype/grype/version"
 	"github.com/anchore/grype/grype/vulnerability"
+	"github.com/anchore/grype/internal/log"
 )
 
-func ByPackageDistro(store vulnerability.ProviderByDistro, d *distro.Distro, p pkg.Package, upstreamMatcher match.MatcherType) ([]match.Match, error) {
-	if d == nil {
-		return nil, nil
+// ByDistro returns criteria which will match vulnerabilities based on any of the provided Distros
+func ByDistro(d ...distro.Distro) vulnerability.Criteria {
+	return &DistroCriteria{
+		Distros: d,
 	}
+}
 
-	verObj, err := version.NewVersionFromPkg(p)
+type DistroCriteria struct {
+	Distros []distro.Distro
+}
+
+func (c *DistroCriteria) MatchesVulnerability(value vulnerability.Vulnerability) (bool, error) {
+	ns, err := namespace.FromString(value.Namespace)
 	if err != nil {
-		return nil, fmt.Errorf("matcher failed to parse version pkg=%q ver=%q: %w", p.Name, p.Version, err)
+		log.Debugf("unable to determine namespace for vulnerability %v: %v", value.Reference.ID, err)
+		return false, nil
+	}
+	dns, ok := ns.(*distroNs.Namespace)
+	if !ok || dns == nil {
+		// not a Distro-based vulnerability
+		return false, nil
+	}
+	if len(c.Distros) == 0 {
+		return true, nil
+	}
+	for _, d := range c.Distros {
+		if matchesDistro(&d, dns) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+var _ interface {
+	vulnerability.Criteria
+} = (*DistroCriteria)(nil)
+
+// matchesDistro returns true distro types are equal and versions are compatible
+func matchesDistro(d *distro.Distro, ns *distroNs.Namespace) bool {
+	if d == nil || ns == nil {
+		return false
 	}
 
-	allPkgVulns, err := store.GetByDistro(d, p)
-	if err != nil {
-		return nil, fmt.Errorf("matcher failed to fetch distro=%q pkg=%q: %w", d, p.Name, err)
-	}
+	ty := namespace.DistroTypeString(d.Type)
 
-	applicableVulns, err := onlyVulnerableVersions(verObj, allPkgVulns)
-	if err != nil {
-		return nil, fmt.Errorf("unable to filter distro-related vulnerabilities: %w", err)
+	distroType := ns.DistroType()
+	if distroType != d.Type && distroType != distro.Type(ty) {
+		return false
 	}
+	return compatibleVersion(d.FullVersion(), ns.Version())
+}
 
-	var matches []match.Match
-	for _, vuln := range applicableVulns {
-		matches = append(matches, match.Match{
-			Vulnerability: vuln,
-			Package:       p,
-			Details: []match.Detail{
-				{
-					Type:    match.ExactDirectMatch,
-					Matcher: upstreamMatcher,
-					SearchedBy: map[string]interface{}{
-						"distro": map[string]string{
-							"type":    d.Type.String(),
-							"version": d.RawVersion,
-						},
-						// why include the package information? The given package searched with may be a source package
-						// for another package that is installed on the system. This makes it apparent exactly what
-						// was used in the search.
-						"package": map[string]string{
-							"name":    p.Name,
-							"version": p.Version,
-						},
-						"namespace": vuln.Namespace,
-					},
-					Found: map[string]interface{}{
-						"versionConstraint": vuln.Constraint.String(),
-					},
-					Confidence: 1.0, // TODO: this is hard coded for now
-				},
-			},
-		})
+// compatibleVersion returns true when the versions are the same or the partial version describes the matching parts
+// of the fullVersion
+func compatibleVersion(fullVersion string, partialVersion string) bool {
+	if fullVersion == "" {
+		return true
 	}
-
-	return matches, err
+	if fullVersion == partialVersion {
+		return true
+	}
+	if strings.HasPrefix(fullVersion, partialVersion) && len(fullVersion) > len(partialVersion) && fullVersion[len(partialVersion)] == '.' {
+		return true
+	}
+	return false
 }
